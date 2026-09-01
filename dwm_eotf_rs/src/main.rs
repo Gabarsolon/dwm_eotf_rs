@@ -1,5 +1,6 @@
 mod args;
 mod patcher;
+mod registry;
 mod startup;
 mod tray;
 
@@ -21,6 +22,7 @@ use windows::Win32::{
 use crate::{
     args::{Args, Commands},
     patcher::{SimplePatcher, build_aho_corasick},
+    registry::set_mpo_state,
     startup::{register_startup, unregister_startup},
     tray::run_in_tray,
 };
@@ -49,10 +51,14 @@ fn execute(args: Args) -> Result<()> {
 
     if let Some(cmd) = &args.command {
         return match cmd {
-            Commands::Restore => kill_dwm(),
+            Commands::Restore => {
+                info!("Enabling MPO (Multi-Plane Overlay)...");
+                set_mpo_state(true)?;
+                kill_dwm()?;
+                Ok(())
+            }
             Commands::Schedule => register_startup(&args),
-            Commands::Unschedule => unregister_startup(false),
-            Commands::UnscheduleAll => unregister_startup(true),
+            Commands::Unschedule { all } => unregister_startup(*all),
             Commands::Dump {
                 big_shaders,
                 output_dir,
@@ -61,7 +67,16 @@ fn execute(args: Args) -> Result<()> {
     }
 
     if args.compatibility_mode {
-        info!("Patching DWM EOTF to use gamma {:.3}...", args.gamma);
+        if args.disable_mpo {
+            info!("Disabling MPO (Multi-Plane Overlay)...");
+            set_mpo_state(false)?;
+        }
+
+        info!(
+            "Patching DWM EOTF to use gamma {:.3} and brightness factor {:.3}...",
+            args.gamma, args.brightness
+        );
+
         patch_dwm(&SimplePatcher::new(
             &build_aho_corasick()?,
             args.gamma,
@@ -95,7 +110,7 @@ fn kill_dwm() -> Result<()> {
 }
 
 fn patch_dwm(patcher: &SimplePatcher) -> Result<()> {
-    debug!("Obtaining debugging privileges...");
+    debug!("Obtaining/renewing debugging privileges...");
     obtain_debug_privileges()?;
 
     match ShaderPatcher::open_restarted(DWM_EXE, DWM_DLL)?.execute_patching(patcher)? {

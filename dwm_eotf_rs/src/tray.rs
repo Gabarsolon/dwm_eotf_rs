@@ -8,7 +8,7 @@ use crate::{
     args::Args,
     kill_dwm, patch_dwm,
     patcher::{SimplePatcher, build_aho_corasick},
-    startup,
+    registry, startup,
 };
 
 static ICON_ON: &[u8] = include_bytes!("../icons/on.ico");
@@ -21,12 +21,19 @@ enum Event {
     SetSRGB,
     SetGamma(f32),
     ToggleStartup,
+    ToggleMpo,
     Exit,
 }
 
 pub fn run_in_tray(mut args: Args) -> Result<()> {
     info!("Launching in Tray Mode...");
 
+    if args.disable_mpo {
+        info!("Disabling MPO (Multi-Plane Overlay)...");
+        registry::set_mpo_state(false)?;
+    }
+
+    let initial_mpo = registry::is_mpo_enabled()?;
     let initial_registration = startup::is_registered()?;
     let initial_mode = Event::SetSRGB;
     let initial_icon = ICON_OFF;
@@ -50,7 +57,12 @@ pub fn run_in_tray(mut args: Args) -> Result<()> {
         .tooltip("dwm_eotf_rs")
         .on_right_click(Event::RightClick)
         .on_click(Event::LeftClick)
-        .menu(build_menu(initial_mode, custom_gamma, initial_registration))
+        .menu(build_menu(
+            initial_mode,
+            custom_gamma,
+            initial_registration,
+            initial_mpo,
+        ))
         .build()?;
 
     let thread_jh = std::thread::spawn(move || -> Result<()> {
@@ -59,11 +71,12 @@ pub fn run_in_tray(mut args: Args) -> Result<()> {
         let icon_on = Icon::from_buffer(ICON_ON, None, None)?;
 
         let mut mode = initial_mode;
+        let mut mpo = initial_mpo;
         let mut registration = initial_registration;
 
         macro_rules! update_tray {
             () => {
-                tray_icon.set_menu(&build_menu(mode, custom_gamma, registration))?;
+                tray_icon.set_menu(&build_menu(mode, custom_gamma, registration, mpo))?;
                 tray_icon.set_icon(match mode {
                     Event::SetSRGB => &icon_off,
                     _ => &icon_on,
@@ -84,7 +97,10 @@ pub fn run_in_tray(mut args: Args) -> Result<()> {
                     update_tray!();
                 }
                 Event::SetGamma(g) => {
-                    info!("Patching DWM EOTF to use gamma {:.3}...", g);
+                    info!(
+                        "Patching DWM EOTF to use gamma {:.3} and brightness {:.3}...",
+                        g, args.brightness
+                    );
                     patch_dwm(&SimplePatcher::new(
                         &aho,
                         g,
@@ -112,6 +128,24 @@ pub fn run_in_tray(mut args: Args) -> Result<()> {
                     registration = !registration;
                     update_tray!();
                 }
+                Event::ToggleMpo => {
+                    info!("Toggling MPO...");
+                    registry::set_mpo_state(!mpo)?;
+                    mpo = !mpo;
+
+                    if let Event::SetGamma(g) = mode {
+                        patch_dwm(&SimplePatcher::new(
+                            &aho,
+                            g,
+                            args.brightness,
+                            args.ignore_whitelist,
+                        ))?;
+                    } else {
+                        kill_dwm()?;
+                    }
+
+                    update_tray!();
+                }
                 Event::RightClick | Event::LeftClick => tray_icon.show_menu()?,
                 Event::Exit => break,
             }
@@ -136,7 +170,12 @@ pub fn run_in_tray(mut args: Args) -> Result<()> {
     thread_jh.join().expect("failed to join tray thread")
 }
 
-fn build_menu(e: Event, custom_gamma: Option<f32>, registration: bool) -> MenuBuilder<Event> {
+fn build_menu(
+    e: Event,
+    custom_gamma: Option<f32>,
+    registration: bool,
+    mpo: bool,
+) -> MenuBuilder<Event> {
     let mut menu = MenuBuilder::new()
         .checkable("sRGB (Disable)", e == Event::SetSRGB, Event::SetSRGB)
         .separator();
@@ -154,6 +193,8 @@ fn build_menu(e: Event, custom_gamma: Option<f32>, registration: bool) -> MenuBu
     menu.checkable("Gamma 2.0", e == Event::SetGamma(2.0), Event::SetGamma(2.0))
         .checkable("Gamma 2.2", e == Event::SetGamma(2.2), Event::SetGamma(2.2))
         .checkable("Gamma 2.4", e == Event::SetGamma(2.4), Event::SetGamma(2.4))
+        .separator()
+        .checkable("Multi-Plane Overlay", mpo, Event::ToggleMpo)
         .separator()
         .checkable("Autostart", registration, Event::ToggleStartup)
         .separator()
