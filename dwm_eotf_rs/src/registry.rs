@@ -20,3 +20,28 @@ pub fn set_mpo_state(enabled: bool) -> Result<()> {
         .create(MPO_REG_KEY)?
         .set_u32(MPO_REG_NAME, value)?)
 }
+
+const MONITOR_DATA_STORE: &str = "SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers\\MonitorDataStore";
+
+pub fn get_primary_sdr_white_level() -> Option<f32> {
+    let key = LOCAL_MACHINE.open(MONITOR_DATA_STORE).ok()?;
+    let mut highest_level = 0u32;
+    if let Ok(keys) = key.keys() {
+        for subkey_name in keys {
+            if let Ok(subkey) = key.open(&subkey_name) {
+                if let Ok(val) = subkey.get_u32("SDRWhiteLevel") {
+                    if val > highest_level {
+                        highest_level = val;
+                    }
+                }
+            }
+        }
+    }
+    if highest_level > 0 {
+        // SDRWhiteLevel is stored in units of 1/1000 of 80 nits
+        // e.g. 6000 * 80 / 1000 = 480 nits
+        Some((highest_level as f32) * 80.0 / 1000.0)
+    } else {
+        None
+    }
+}

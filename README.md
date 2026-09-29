@@ -1,10 +1,21 @@
 # About
 
-`dwm_eotf_rs` fixes washed out look in Windows' UI, applications and some SDR games, when HDR is enabled, by replacing DWM's piecewise sRGB transfer function with [proper gamma curve](https://github.com/dylanraga/win11hdr-srgb-to-gamma2.2-icm). 
+`dwm_eotf_rs` (fork with Translucent Border Fix & Linear Nits Scaling) fixes the washed-out look in Windows UI, applications, and SDR games when HDR is enabled by replacing DWM's piecewise sRGB transfer function with a [proper gamma curve](https://github.com/dylanraga/win11hdr-srgb-to-gamma2.2-icm).
 
-It does that by reading memory of the loaded `dwmcore.dll` module, patching shaders that are responsible for incorrect SDR to HDR conversions and writing it back.
+It does this by reading the memory of the loaded `dwmcore.dll` module, patching the shaders responsible for SDR-to-HDR conversion and translucent alpha correction, and writing them back.
 
-This is an alternative implementation of the same idea that is behind [dwm_eotf](https://github.com/ledoge/dwm_eotf). `dwm_eotf_rs` is a major upgrade in terms of QoL, it also provides additional features, such as system tray controls, autostart and shader dumping. It's more reliable as well, as it does not require multiple retries for it to work.
+### Fork Improvements & Bug Fixes:
+1. **Translucent Border Fix (`AlphaCorrectSDR` Neutralization):**
+   - In upstream `dwm_eotf_rs`, increasing brightness beyond 1.0 caused 1px borders of UI elements on the Taskbar, Settings window, and Mica/Acrylic cards to completely vanish.
+   - **Root Cause:** DWM includes 15 internal shaders (`AlphaCorrectSDR`, `AlphaCorrectExtendedSDR`, `BoostSDRLuminance`) that apply an empirical polynomial delta to translucent pixels ($0 < \alpha < 1$). Microsoft designed this assuming luminance $\le 1.0$. Under brightness boost ($L > 1.0$), the delta becomes strongly negative and `mad_sat` clamps the border alpha and RGB to `0.0`.
+   - **Fix:** Automatically neutralizes these polynomial coefficients in all 15 matching shaders. Translucent borders and outlines remain crisp, visible, and intact at any brightness.
+2. **Corrected Linear Luminance (Nits) Scaling:**
+   - Upstream used `scale = brightness.powf(0.5 / gamma)`, which accidentally applied $\sqrt{\text{brightness}}$ instead of linear physical luminance.
+   - Fixed to `scale = brightness.powf(1.0 / gamma)` so that `--brightness 2.0` actually delivers 2.0x linear nits.
+3. **Direct `--nits <NITS>` Option:**
+   - Automatically queries your display's current Windows SDR white level from the registry (e.g., 480 nits at 100% SDR slider) and calculates the exact multiplier needed to hit your target nits (e.g. `--nits 1000`).
+4. **Complete Forward EOTF Whitelist:**
+   - Expanded the whitelist to include all 6 forward SDR-to-scRGB conversion shaders across all DWM feature levels and shader bundles (SM 4.0 and Level 9).
 
 **You do not need to disable/revert the patch (or restart DWM) when playing HDR games or videos. It only affects DWM composed SDR content!**
 
@@ -17,63 +28,55 @@ Patches DWM's shaders to use proper EOTF (gamma)
 Usage: dwm_eotf_rs.exe [OPTIONS] [GAMMA] [COMMAND]
 
 Commands:
-  restore         Restores original sRGB EOTF (by restarting DWM)
-  schedule        Creates a task ('dwm_eotf_rs') that runs the app on user logon
-  unschedule      Removes the startup task ('dwm_eotf_rs') from Task Scheduler
-  unschedule-all  Removes the startup task ('dwm_eotf_rs') from Task Scheduler for all users
-  dump            Dumps DWM's original shaders as DXBC
-  help            Print this message or the help of the given subcommand(s)
+  dump        Dumps DWM's original shaders as DXBC
+  restore     Restores original sRGB EOTF and enables Multi-Plane Overlay
+  schedule    Creates a task ('dwm_eotf_rs') that runs the app on user logon
+  unschedule  Removes the startup task from Task Scheduler
+  help        Print this message or the help of the given subcommand(s)
 
 Arguments:
   [GAMMA]  Exponent to use during EOTF patching [default: 2.2]
 
 Options:
-  -c, --compatibility-mode       Patches DWM and exits (disables tray mode)
-  -s, --skip-patching            Prevents automatic patching on app start (tray mode)
-  -w, --wait-time <WAIT_TIME>    Delay (in seconds) before automatic patching on app start (tray mode) [default: 5]
+      --brightness <BRIGHTNESS>  Optional brightness multiplier (factor for nits, e.g. 1.56, or 2.083 for 1000 nits) [default: 1]
+      --nits <NITS>              Target SDR brightness in nits (e.g. 1000). Automatically calculates multiplier based on display white level
+      --no-fix-borders           Disable border & Mica alpha correction fix (borders remain visible by default)
+  -c, --compatibility-mode       Patch DWM and exit (disables tray mode)
+  -d, --disable-mpo              Disable Multi-Plane Overlay (prevents windows from bypassing DWM)
   -i, --ignore-whitelist         Patch every shader that contains sRGB EOTF patterns
-      --brightness <BRIGHTNESS>  Brightness multiplier (factor for nits) [default: 1]
+  -s, --skip-patching            Prevent automatic patching on app start (tray mode only)
+  -w, --wait-time <WAIT_TIME>    Delay (in seconds) before patching on start (tray mode only) [default: 5]
   -h, --help                     Print help
   -V, --version                  Print version
 ```
 
+## Quick Start Examples
+
+- **Target 1000 Nits directly with 2.2 Gamma (Tray Mode):**
+  ```powershell
+  .\dwm_eotf_rs.exe --nits 1000 2.2
+  ```
+
+- **Target 1000 Nits and exit (Compatibility Mode):**
+  ```powershell
+  .\dwm_eotf_rs.exe -c --nits 1000 2.2
+  ```
+
+- **Set specific brightness factor (e.g. 1.56x) without losing borders:**
+  ```powershell
+  .\dwm_eotf_rs.exe --brightness 1.56 2.2
+  ```
+
 ## Tray Mode
-By default, the app runs in system tray, where you can toggle patch as needed as well as select a gamma value (2.0/2.2/2.4/[GAMMA]).
-
-When it launches, it will wait a few seconds (specified by `-w` option) before inital patching to avoid problems in some edge cases.
-
-|||
-|---------------------|---------------------|
-|![](.assets/on.png)|![](.assets/off.png)|
+By default, the app runs in the system tray, where you can toggle the patch as needed as well as select a gamma value (2.0/2.2/2.4/[GAMMA]).
 
 ## Compatibility Mode
-When supplied with the `-c` flag, `dwm_eotf_rs` works like a simple console app - it patches DWM and exits.
-
-![](.assets/compat.png)
+When supplied with the `-c` flag, `dwm_eotf_rs` works like a simple console app — it patches DWM and exits.
 
 ## Startup
-
-The app can register itself to run automatically when user logs in, using the Windows Task Scheduler (task named `dwm_eotf_rs`).
-
-The `-c schedule` option combination schedules `dwm_eotf_rs` to autostart in Compatibility Mode. **This is the intended way to use the app.**
-
-In tray mode, the context menu includes an "Autostart" checkable item that toggles the startup task on or off. If the gamma value is changed while autostart is on, the task is updated to use the new gamma.
-
-## Whitelist
-By default, `dwm_eotf_rs` will patch only 4 shaders selected by ledoge. I think this covers most use cases, but it's possible to patch all shaders with same patterns by using `--ignore-whitelist` flag.
-
-## Shader Dumping
-The app can dump DWM's shaders as DXBC files for research purposes.
-
-These shaders are nested. There are 30 top-level shaders and hundreds of sub-shaders. Use `--big-shaders` flag to dump only former.
-
-# Library
-
-dwm_eotf_rs depends on `shader_patcher` library from this repository that can be used to implement patching of other apps.
-
-# Known Issues
-- Chromium-based apps (Web browsers, VS Code, etc) also use incorrect curves and will switch back and forth between original and fixed look sometimes. Setting `#force-color-profile` flag to `hdr10` or `scrgb-linear` will help somewhat.
-- Some SDR games bypass DWM when in fullscreen, so the `dwm_eotf_rs` will not help. You can use ReShade and [Lilium's](https://github.com/EndlesslyFlowering/ReShade_HDR_shaders) "SDR TRC Fix" shader in such cases.
+The app can register itself to run automatically when the user logs in, using the Windows Task Scheduler (task named `dwm_eotf_rs`).
+The `-c schedule` option schedules `dwm_eotf_rs` to autostart in Compatibility Mode.
 
 # Acknowledgements
-- Many thanks to [ledoge](https://github.com/ledoge) for original C implementation.
+- Many thanks to [SERGEYDJUM](https://github.com/SERGEYDJUM) for `dwm_eotf_rs`.
+- Many thanks to [ledoge](https://github.com/ledoge) for the original C implementation.

@@ -66,6 +66,9 @@ fn execute(args: Args) -> Result<()> {
         };
     }
 
+    let brightness = args.effective_brightness();
+    let fix_borders = args.fix_borders();
+
     if args.compatibility_mode {
         if args.disable_mpo {
             info!("Disabling MPO (Multi-Plane Overlay)...");
@@ -73,15 +76,16 @@ fn execute(args: Args) -> Result<()> {
         }
 
         info!(
-            "Patching DWM EOTF to use gamma {:.3} and brightness factor {:.3}...",
-            args.gamma, args.brightness
+            "Patching DWM EOTF to use gamma {:.3} and brightness factor {:.3} (fix_borders: {})...",
+            args.gamma, brightness, fix_borders
         );
 
         patch_dwm(&SimplePatcher::new(
             &build_aho_corasick()?,
             args.gamma,
-            args.brightness,
+            brightness,
             args.ignore_whitelist,
+            fix_borders,
         ))
     } else {
         hide_cmd();

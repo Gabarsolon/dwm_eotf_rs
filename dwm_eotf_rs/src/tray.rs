@@ -65,6 +65,10 @@ pub fn run_in_tray(mut args: Args) -> Result<()> {
         ))
         .build()?;
 
+    let brightness = args.effective_brightness();
+    let fix_borders = args.fix_borders();
+    args.brightness = brightness;
+
     let thread_jh = std::thread::spawn(move || -> Result<()> {
         let aho = build_aho_corasick()?;
         let icon_off = Icon::from_buffer(ICON_OFF, None, None)?;
@@ -98,14 +102,15 @@ pub fn run_in_tray(mut args: Args) -> Result<()> {
                 }
                 Event::SetGamma(g) => {
                     info!(
-                        "Patching DWM EOTF to use gamma {:.3} and brightness {:.3}...",
-                        g, args.brightness
+                        "Patching DWM EOTF to use gamma {:.3} and brightness factor {:.3} (fix_borders: {})...",
+                        g, brightness, fix_borders
                     );
                     patch_dwm(&SimplePatcher::new(
                         &aho,
                         g,
-                        args.brightness,
+                        brightness,
                         args.ignore_whitelist,
+                        fix_borders,
                     ))?;
                     (mode, args.gamma) = (e, g);
 
@@ -137,8 +142,9 @@ pub fn run_in_tray(mut args: Args) -> Result<()> {
                         patch_dwm(&SimplePatcher::new(
                             &aho,
                             g,
-                            args.brightness,
+                            brightness,
                             args.ignore_whitelist,
+                            fix_borders,
                         ))?;
                     } else {
                         kill_dwm()?;

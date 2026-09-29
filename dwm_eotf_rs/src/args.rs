@@ -5,9 +5,17 @@ const DEFAULT_WAIT_TIME: f32 = 5.0;
 #[derive(Debug, clap::Parser)]
 #[command(version, about, long_about = None)]
 pub struct Args {
-    /// Optional brightness multiplier (factor for nits)
+    /// Optional brightness multiplier (factor for nits, e.g. 1.56, or 2.083 for 1000 nits)
     #[arg(long, default_value_t = DEFAULT_BRIGHTNESS)]
     pub brightness: f32,
+
+    /// Target SDR brightness in nits (e.g. 1000). Automatically calculates multiplier based on display white level.
+    #[arg(long)]
+    pub nits: Option<f32>,
+
+    /// Disable border & Mica alpha correction fix (borders remain visible by default)
+    #[arg(long)]
+    pub no_fix_borders: bool,
 
     /// Patch DWM and exit (disables tray mode)
     #[arg(short, long)]
@@ -65,8 +73,27 @@ pub enum Commands {
 }
 
 impl Args {
+    pub fn effective_brightness(&self) -> f32 {
+        if let Some(target_nits) = self.nits {
+            let current_white_level = crate::registry::get_primary_sdr_white_level().unwrap_or(480.0);
+            if current_white_level > 0.0 {
+                let factor = target_nits / current_white_level;
+                tracing::info!(
+                    "Targeting {:.1} nits with SDR base white level {:.1} nits -> brightness multiplier {:.3}x",
+                    target_nits, current_white_level, factor
+                );
+                return factor;
+            }
+        }
+        self.brightness
+    }
+
+    pub fn fix_borders(&self) -> bool {
+        !self.no_fix_borders
+    }
+
     pub fn serialize_args(&self) -> String {
-        let mut arguments = Vec::with_capacity(5);
+        let mut arguments = Vec::with_capacity(6);
 
         if self.ignore_whitelist {
             arguments.push("-i".to_string());
@@ -88,8 +115,14 @@ impl Args {
             arguments.push(format!("-w {:.1}", self.wait_time));
         }
 
-        if self.brightness != DEFAULT_BRIGHTNESS {
+        if let Some(nits) = self.nits {
+            arguments.push(format!("--nits {:.1}", nits));
+        } else if self.brightness != DEFAULT_BRIGHTNESS {
             arguments.push(format!("--brightness {:.3}", self.brightness));
+        }
+
+        if self.no_fix_borders {
+            arguments.push("--no-fix-borders".to_string());
         }
 
         arguments.push(format!("{:.3}", self.gamma));
