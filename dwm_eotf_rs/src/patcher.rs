@@ -22,8 +22,6 @@ static HASH_WHITELIST: [u128; 6] = [
 ];
 
 // All 15 DWM AlphaCorrectSDR / AlphaCorrectExtendedSDR / BoostSDRLuminance shaders
-// In unpatched DWM, these apply a polynomial delta that clamps alpha to 0 for subtle
-// translucent elements (taskbar borders, window frames, Settings Mica cards) when luminance > 1.0.
 static ALPHA_CORRECT_WHITELIST: [u128; 15] = [
     0x758445033aff77cf29cee921baf880fa, // fa80f8ba21e9ce29cf77ff3a03458475
     0xa4c7098ffff49306e2903060139e3302, // 02339e13603090e20693f4ff8f09c7a4
@@ -48,11 +46,7 @@ const ALPHA_B2: [u8; 4] = [0x27, 0x55, 0xea, 0xbd]; // -0.1144202277f32
 
 // Polynomial coefficients in BoostSDRLuminance
 const ALPHA_C1: [u8; 4] = [0xd7, 0x12, 0xca, 0xbf]; // -1.57869995f32
-const ALPHA_C2: [u8; 4] = [0x17, 0xb7, 0xd1, 0x3c]; //  0.025600f32
-const ALPHA_C3: [u8; 4] = [0x60, 0xe5, 0xd0, 0xbd]; // -0.102000f32
 const ALPHA_C4: [u8; 4] = [0x78, 0x7a, 0x55, 0x3f]; //  0.833899975f32
-
-const ZERO4: [u8; 4] = [0x00, 0x00, 0x00, 0x00];
 
 fn contains_bytes(data: &[u8], sub: &[u8]) -> bool {
     data.windows(sub.len()).any(|w| w == sub)
@@ -80,6 +74,8 @@ pub struct SimplePatcher<'a> {
     replacements: [[u8; 16]; 4],
     ignore_whitelist: bool,
     fix_borders: bool,
+    b1_replacement: [u8; 4],
+    c1_replacement: [u8; 4],
 }
 
 impl<'a> SimplePatcher<'a> {
@@ -112,11 +108,29 @@ impl<'a> SimplePatcher<'a> {
             [scale, scale, scale, 0.0],
         ]);
 
+        // Dynamic border opacity correction:
+        // In unpatched DWM at standard SDR (lum = 1.0), the polynomial computes:
+        //   (lum - 0.5) * -1.778463 = -0.8892315
+        // which dims subtle border alpha (e.g. 0.08 -> 0.0181) for natural visual blending.
+        // Under brightness boost (lum > 1.0), this became strongly negative, clamping alpha to 0.0.
+        // Setting it to 0.0 leaves alpha un-dimmed (0.08), which appears too bright / glaring.
+        // By scaling b1 inversely with (brightness - 0.5), (lum - 0.5) * b1 remains exactly -0.8892315!
+        // The border maintains its exact original Windows 11 opacity without vanishing or glowing!
+        let (b1_replacement, c1_replacement) = if brightness > 1.0 {
+            let b1 = -0.8892315 / (brightness - 0.5);
+            let c1 = -1.57869995 / brightness;
+            (cast::<f32, [u8; 4]>(b1), cast::<f32, [u8; 4]>(c1))
+        } else {
+            (ALPHA_B1, ALPHA_C1)
+        };
+
         Self {
             aho,
             replacements,
             ignore_whitelist,
             fix_borders,
+            b1_replacement,
+            c1_replacement,
         }
     }
 }
@@ -142,7 +156,7 @@ impl<'a> BinaryPatcher for SimplePatcher<'a> {
             }
         }
 
-        // 2. Check if this is an AlphaCorrect / BoostSDR shader that corrupts translucent borders
+        // 2. Adjust AlphaCorrect / BoostSDR shaders so borders maintain natural opacity under boost
         if self.fix_borders {
             let is_alpha_shader = ALPHA_CORRECT_WHITELIST.contains(&checksum)
                 || (contains_bytes(data, &ALPHA_B1) && contains_bytes(data, &ALPHA_B2))
@@ -150,16 +164,12 @@ impl<'a> BinaryPatcher for SimplePatcher<'a> {
 
             if is_alpha_shader {
                 let mut count = 0;
-                count += replace_all_occurrences(data, &ALPHA_B1, &ZERO4);
-                count += replace_all_occurrences(data, &ALPHA_B2, &ZERO4);
-                count += replace_all_occurrences(data, &ALPHA_C1, &ZERO4);
-                count += replace_all_occurrences(data, &ALPHA_C2, &ZERO4);
-                count += replace_all_occurrences(data, &ALPHA_C3, &ZERO4);
-                count += replace_all_occurrences(data, &ALPHA_C4, &ZERO4);
+                count += replace_all_occurrences(data, &ALPHA_B1, &self.b1_replacement);
+                count += replace_all_occurrences(data, &ALPHA_C1, &self.c1_replacement);
 
                 if count > 0 {
                     debug!(
-                        "Neutralized {} alpha correction coefficients in shader `{:032x}`",
+                        "Calibrated {} alpha correction coefficients in shader `{:032x}`",
                         count, checksum
                     );
                     return Ok(true);
