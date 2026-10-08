@@ -29,12 +29,11 @@ pub fn get_primary_sdr_white_level() -> Result<Option<f32>> {
     let mut highest_level = 0u32;
     if let Ok(keys) = key.keys() {
         for subkey_name in keys {
-            if let Ok(subkey) = key.open(&subkey_name) {
-                if let Ok(val) = subkey.get_u32("SDRWhiteLevel") {
-                    if val > highest_level {
-                        highest_level = val;
-                    }
-                }
+            if let Ok(subkey) = key.open(&subkey_name)
+                && let Ok(val) = subkey.get_u32("SDRWhiteLevel")
+                && val > highest_level
+            {
+                highest_level = val;
             }
         }
     }

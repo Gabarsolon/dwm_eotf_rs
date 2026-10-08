@@ -8,21 +8,21 @@ const DEFAULT_WAIT_TIME: f32 = 5.0;
 #[derive(Debug, clap::Parser)]
 #[command(version, about, long_about = None)]
 pub struct Args {
-    /// Optional target SDR brightness in nits (depends on display setup, see ReadMe)
-    #[arg(short, long)]
-    pub nits: Option<f32>,
+    /// Exponent to use during EOTF patching
+    #[arg(default_value_t = DEFAULT_GAMMA)]
+    pub gamma: f32,
 
     /// Patch DWM and exit (disables tray mode)
     #[arg(short, long)]
     pub compatibility_mode: bool,
 
-    /// Disable Multi-Plane Overlay (prevents windows from bypassing DWM)
+    /// Optional Multi-Plane Overlay toggle (set to false to prevent some apps from bypassing DWM)
     #[arg(short, long)]
-    pub disable_mpo: bool,
+    pub mpo_state: Option<bool>,
 
-    /// Exponent to use during EOTF patching
-    #[arg(default_value_t = DEFAULT_GAMMA)]
-    pub gamma: f32,
+    /// Optional target SDR brightness in nits (depends on display setup, see ReadMe)
+    #[arg(short, long)]
+    pub nits: Option<f32>,
 
     /// Patch every shader that contains sRGB EOTF or alpha correction patterns
     #[arg(short, long)]
@@ -77,15 +77,15 @@ pub enum Commands {
 
 impl Args {
     pub fn effective_brightness(&self) -> Result<f32> {
-        if let Some(target_nits) = self.nits {
-            if let Some(reported_nits) = registry::get_primary_sdr_white_level()? {
-                let factor = target_nits / reported_nits;
-                debug!(
-                    "Reported SDR paper white level is {:.1} nits, using {:.3}x brightness factor",
-                    reported_nits, factor
-                );
-                return Ok(factor);
-            }
+        if let Some(target_nits) = self.nits
+            && let Some(reported_nits) = registry::get_primary_sdr_white_level()?
+        {
+            let factor = target_nits / reported_nits;
+            debug!(
+                "Reported SDR paper white level is {:.1} nits, using {:.3}x brightness factor",
+                reported_nits, factor
+            );
+            return Ok(factor);
         }
 
         // dwm_eotf compatible multiplier
@@ -107,8 +107,8 @@ impl Args {
             arguments.push("-c".to_string());
         }
 
-        if self.disable_mpo {
-            arguments.push("-d".to_string());
+        if let Some(mpo) = self.mpo_state {
+            arguments.push(format!("-m {}", mpo));
         }
 
         if self.wait_time != DEFAULT_WAIT_TIME {

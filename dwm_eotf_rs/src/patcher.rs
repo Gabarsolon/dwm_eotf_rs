@@ -51,6 +51,7 @@ static ALPHA_CORRECT_WHITELIST: [u128; 15] = [
     0x7737fc9ef8ff2f6711c3b81b49f7de0c, // 0cdef7491bb8c311672ffff89efc3777 (BoostExtendedSDRLuminance, SM 4.0 + Level 9)
 ];
 
+#[allow(clippy::excessive_precision)]
 static ORIGINAL_PATTERNS: [[f32; 4]; 12] = [
     // SDR-to-HDR patterns
     [2.4, 2.4, 2.4, 0.0],
@@ -101,8 +102,8 @@ impl<'a> SimplePatcher<'a> {
         // Setting it to 0.0 leaves alpha un-dimmed (0.08), which appears too bright / glaring.
         // By scaling b1 inversely with (brightness - 0.5), (lum - 0.5) * b1 remains exactly -0.8892315!
         // The border maintains its exact original Windows 11 opacity without vanishing or glowing!
-        let mut b1 = -1.77846289;
-        let mut c1 = -1.57869995;
+        #[allow(clippy::excessive_precision)]
+        let (mut b1, mut c1) = (-1.77846289, -1.57869995);
         let scale = brightness.powf(1.0 / gamma);
 
         if !no_alpha_fix && (brightness > 1.0) {
@@ -110,6 +111,7 @@ impl<'a> SimplePatcher<'a> {
             c1 /= brightness;
         }
 
+        #[allow(clippy::excessive_precision)]
         let replacements: [[u8; 16]; 12] = cast([
             [gamma, gamma, gamma, 0.0],
             [0.0, 0.0, 0.0, 0.0],
@@ -145,9 +147,9 @@ impl<'a> BinaryPatcher for SimplePatcher<'a> {
         let patched = self.aho.replace_all_bytes(data, &self.replacements);
 
         if patched.len() != data.len() {
-            return Err(Error::ReplLenChange)
+            return Err(Error::ReplLenChange);
         }
-        
+
         data.copy_from_slice(&patched);
         Ok(true)
     }

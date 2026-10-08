@@ -28,9 +28,12 @@ enum Event {
 pub fn run_in_tray(mut args: Args) -> Result<()> {
     info!("Launching in Tray Mode...");
 
-    if args.disable_mpo {
-        info!("Disabling MPO (Multi-Plane Overlay)...");
-        registry::set_mpo_state(false)?;
+    if let Some(mpo) = args.mpo_state {
+        info!(
+            "{} Multi-Plane Overlay (MPO)...",
+            if mpo { "Enabling" } else { "Disabling" }
+        );
+        registry::set_mpo_state(mpo)?;
     }
 
     let initial_mpo = registry::is_mpo_enabled()?;

@@ -67,9 +67,12 @@ fn execute(args: Args) -> Result<()> {
     }
 
     if args.compatibility_mode {
-        if args.disable_mpo {
-            info!("Disabling MPO (Multi-Plane Overlay)...");
-            set_mpo_state(false)?;
+        if let Some(mpo) = args.mpo_state {
+            info!(
+                "{} Multi-Plane Overlay (MPO)...",
+                if mpo { "Enabling" } else { "Disabling" }
+            );
+            set_mpo_state(mpo)?;
         }
 
         let brightness = args.effective_brightness()?;
